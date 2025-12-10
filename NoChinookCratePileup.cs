@@ -5,19 +5,77 @@
  */
 
 using Facepunch;
+using Newtonsoft.Json;
 using System.Collections.Generic;
 
 namespace Oxide.Plugins
 {
-    [Info("No Chinook Crate Pileup", "VisEntities", "1.0.0")]
+    [Info("No Chinook Crate Pileup", "VisEntities", "1.1.0")]
     [Description("Prevents multiple chinook crates from piling up in the same area.")]
     public class NoChinookCratePileup : RustPlugin
     {
         #region Fields
 
         private static NoChinookCratePileup _plugin;
+        private static Configuration _config;
 
         #endregion Fields
+
+        #region Configuration
+
+        private class Configuration
+        {
+            [JsonProperty("Version")]
+            public string Version { get; set; }
+
+            [JsonProperty("Nearby Crate Search Radius")]
+            public float NearbyCrateSearchRadius { get; set; }
+        }
+
+        protected override void LoadConfig()
+        {
+            base.LoadConfig();
+            _config = Config.ReadObject<Configuration>();
+
+            if (string.Compare(_config.Version, Version.ToString()) < 0)
+                UpdateConfig();
+
+            SaveConfig();
+        }
+
+        protected override void LoadDefaultConfig()
+        {
+            _config = GetDefaultConfig();
+        }
+
+        protected override void SaveConfig()
+        {
+            Config.WriteObject(_config, true);
+        }
+
+        private void UpdateConfig()
+        {
+            PrintWarning("Config changes detected! Updating...");
+
+            Configuration defaultConfig = GetDefaultConfig();
+
+            if (string.Compare(_config.Version, "1.0.0") < 0)
+                _config = defaultConfig;
+
+            PrintWarning("Config update complete! Updated from version " + _config.Version + " to " + Version.ToString());
+            _config.Version = Version.ToString();
+        }
+
+        private Configuration GetDefaultConfig()
+        {
+            return new Configuration
+            {
+                Version = Version.ToString(),
+                NearbyCrateSearchRadius = 1.5f
+            };
+        }
+
+        #endregion Configuration
 
         #region Oxide Hooks
 
@@ -28,6 +86,7 @@ namespace Oxide.Plugins
 
         private void Unload()
         {
+            _config = null;
             _plugin = null;
         }
 
@@ -37,7 +96,7 @@ namespace Oxide.Plugins
                 return;
 
             List<HackableLockedCrate> nearbyCrates = Pool.Get<List<HackableLockedCrate>>();
-            Vis.Entities(newCrate.transform.position, 1.5f, nearbyCrates);
+            Vis.Entities(newCrate.transform.position, _config.NearbyCrateSearchRadius, nearbyCrates);
 
             foreach (HackableLockedCrate crate in nearbyCrates)
             {
