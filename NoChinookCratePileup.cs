@@ -1,4 +1,4 @@
-﻿/*
+/*
  * Copyright (C) 2024 Game4Freak.io
  * This mod is provided under the Game4Freak EULA.
  * Full legal terms can be found at https://game4freak.io/eula/
@@ -10,7 +10,7 @@ using System.Collections.Generic;
 
 namespace Oxide.Plugins
 {
-    [Info("No Chinook Crate Pileup", "VisEntities", "1.1.0")]
+    [Info("No Chinook Crate Pileup", "VisEntities", "1.1.1")]
     [Description("Prevents multiple chinook crates from piling up in the same area.")]
     public class NoChinookCratePileup : RustPlugin
     {
@@ -18,6 +18,7 @@ namespace Oxide.Plugins
 
         private static NoChinookCratePileup _plugin;
         private static Configuration _config;
+        private Dictionary<HackableLockedCrate, Timer> _pendingCrates = new Dictionary<HackableLockedCrate, Timer>();
 
         #endregion Fields
 
@@ -86,13 +87,90 @@ namespace Oxide.Plugins
 
         private void Unload()
         {
+            foreach (var kvp in _pendingCrates)
+            {
+                if (kvp.Value != null)
+                    kvp.Value.Destroy();
+            }
+            _pendingCrates.Clear();
+            _pendingCrates = null;
             _config = null;
             _plugin = null;
+        }
+
+        private void OnEntitySpawned(HackableLockedCrate crate)
+        {
+            if (crate == null)
+                return;
+
+            if (!crate.wasDropped)
+                return;
+
+            StartLandingCheck(crate);
+        }
+
+        private void OnEntityKill(HackableLockedCrate crate)
+        {
+            if (crate == null)
+                return;
+
+            StopLandingCheck(crate);
         }
 
         private void OnCrateLanded(HackableLockedCrate newCrate)
         {
             if (newCrate == null)
+                return;
+
+            StopLandingCheck(newCrate);
+            RemoveNearbyCrates(newCrate);
+        }
+
+        #endregion Oxide Hooks
+
+        #region Core Logic
+
+        private void StartLandingCheck(HackableLockedCrate crate)
+        {
+            if (_pendingCrates.ContainsKey(crate))
+                return;
+
+            Timer checkTimer = timer.Repeat(0.1f, 0, () =>
+            {
+                if (crate == null || crate.IsDestroyed)
+                {
+                    StopLandingCheck(crate);
+                    return;
+                }
+
+                if (crate.hasLanded)
+                {
+                    StopLandingCheck(crate);
+                    RemoveNearbyCrates(crate);
+                }
+            });
+
+            _pendingCrates[crate] = checkTimer;
+        }
+
+        private void StopLandingCheck(HackableLockedCrate crate)
+        {
+            if (crate == null)
+                return;
+
+            Timer existingTimer;
+            if (!_pendingCrates.TryGetValue(crate, out existingTimer))
+                return;
+
+            if (existingTimer != null)
+                existingTimer.Destroy();
+
+            _pendingCrates.Remove(crate);
+        }
+
+        private void RemoveNearbyCrates(HackableLockedCrate newCrate)
+        {
+            if (newCrate == null || newCrate.IsDestroyed)
                 return;
 
             List<HackableLockedCrate> nearbyCrates = Pool.Get<List<HackableLockedCrate>>();
@@ -103,13 +181,21 @@ namespace Oxide.Plugins
                 if (crate == newCrate)
                     continue;
 
-                if (crate != null && crate.hasLanded && !crate.IsBeingHacked())
-                    crate.Kill();
+                if (crate == null || crate.IsDestroyed)
+                    continue;
+
+                if (!crate.hasLanded)
+                    continue;
+
+                if (crate.IsBeingHacked())
+                    continue;
+
+                crate.Kill();
             }
 
             Pool.FreeUnmanaged(ref nearbyCrates);
         }
 
-        #endregion Oxide Hooks
+        #endregion Core Logic
     }
 }
